@@ -10,7 +10,7 @@ import shutil
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, Literal, NamedTuple
 from urllib.parse import urlparse
 
@@ -42,27 +42,6 @@ DATA_SOURCE_URI_PATTERN = re.compile(r"^[\w]+:\/\/.*$")
 CLOUD_STORAGE_PROTOCOLS = {"s3", "gs", "az", "hf"}
 
 ResultQueue = asyncio.Queue[Sequence["File"] | None]
-
-
-def _format_etag(etag: str) -> str:
-    """Render local mtime ETags as ISO-8601; leave other ETags unchanged.
-
-    Local listings store ``st_mtime.hex()``. Only that canonical form is
-    converted. A prefix check is not enough: HTTP metadata strips quotes, so an
-    ETag of ``"0x123"`` arrives as ``0x123``, which ``float.fromhex`` accepts
-    but is not an mtime. Conversion is also fail-safe if the timestamp is out
-    of range.
-    """
-    try:
-        mtime = float.fromhex(etag)
-    except ValueError:
-        return etag
-    if mtime.hex() != etag:
-        return etag
-    try:
-        return datetime.fromtimestamp(mtime, timezone.utc).isoformat()
-    except (OverflowError, OSError, ValueError):
-        return etag
 
 
 def is_cloud_uri(uri: str) -> bool:
@@ -108,6 +87,15 @@ class Client(ABC):
         self._fs: AbstractFileSystem | None = None
         self.cache = cache
         self.uri = self.storage_uri(self.name)
+
+    @staticmethod
+    def format_etag(etag: str) -> str:
+        """Render an etag (e.g. for error messages).
+
+        Default matches ``dc.show()`` / Studio (the stored string). Backends that
+        encode extra meaning in the etag (local mtime) override this.
+        """
+        return str(etag)
 
     @staticmethod
     def get_implementation(url: str | os.PathLike[str]) -> type["Client"]:  # noqa: PLR0911
@@ -600,8 +588,8 @@ class Client(ABC):
             if file.etag != etag:
                 raise FileNotFoundError(
                     f"{file.source}/{file.path} changed on the source since the "
-                    f"catalog was created (etag was {_format_etag(file.etag)}, now "
-                    f"{_format_etag(etag)}). "
+                    f"catalog was created (etag was {self.format_etag(file.etag)}, now "
+                    f"{self.format_etag(etag)}). "
                     "Re-run the original dc.read_storage(...) call with "
                     "update=True to refresh the catalog."
                 )
