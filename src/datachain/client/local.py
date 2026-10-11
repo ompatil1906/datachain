@@ -1,6 +1,5 @@
 import os
 import posixpath
-import re
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,15 +18,17 @@ if TYPE_CHECKING:
     from datachain.dataset import StorageURI
 
 
-# Canonical form of ``float.hex()`` / ``st_mtime.hex()`` (e.g. ``0x1.2p+3``).
-_MTIME_HEX_RE = re.compile(r"^-?0x[0-9a-f]+(?:\.[0-9a-f]+)?p[+-]?\d+$")
-
-
 def _local_mtime_iso(etag: str) -> str | None:
-    """Return an ISO timestamp if *etag* is exactly ``st_mtime.hex()``."""
-    if not _MTIME_HEX_RE.fullmatch(etag):
+    """Return an ISO timestamp if *etag* is exactly ``st_mtime.hex()``.
+
+    Local listings always store ``float.hex()`` / ``st_mtime.hex()``. We still
+    require a successful round-trip through ``float.fromhex`` + ``.hex()`` so
+    accidental non-canonical values (e.g. ``0x123``) are left unchanged.
+    """
+    try:
+        mtime = float.fromhex(etag)
+    except ValueError:
         return None
-    mtime = float.fromhex(etag)
     if mtime.hex() != etag:
         return None
     try:
